@@ -2,6 +2,7 @@ package com.majorproject.secrypt;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.hardware.fingerprint.FingerprintManager;
 import android.Manifest;
@@ -33,6 +34,8 @@ public class FingerprintHandler extends FingerprintManager.AuthenticationCallbac
             return;
         }
         manager.authenticate(cryptoObject, cancellationSignal, 0, this, null);
+
+
     }
 
     @Override

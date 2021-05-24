@@ -2,24 +2,18 @@ package com.majorproject.secrypt;
 
 import android.Manifest;
 import android.app.KeyguardManager;
-import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.database.Cursor;
+import android.graphics.Color;
 import android.hardware.fingerprint.FingerprintManager;
-import android.net.Uri;
-
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
-import android.view.View;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
-import android.widget.ListView;
+import android.util.Base64;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import java.io.IOException;
 import java.security.InvalidAlgorithmParameterException;
@@ -28,9 +22,10 @@ import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
+import java.security.PublicKey;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
-import java.util.ArrayList;
+import java.security.spec.InvalidKeySpecException;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -39,23 +34,8 @@ import javax.crypto.SecretKey;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 
-public class ReceiverActivity extends AppCompatActivity {
-
-    private static ReceiverActivity inst;
-    ArrayList<String> smsMessagesList = new ArrayList<>();
-    ListView smsListView;
-    ArrayAdapter arrayAdapter;
-
-    public static ReceiverActivity instance() {
-        return inst;
-    }
-    @Override
-    public void onStart() {
-        super.onStart();
-        inst = this;
-    }
+public class DecryptMessage extends AppCompatActivity {
 
     private static final String KEY_NAME = "yourKey";
     private Cipher cipher;
@@ -65,78 +45,52 @@ public class ReceiverActivity extends AppCompatActivity {
     private FingerprintManager.CryptoObject cryptoObject;
     private FingerprintManager fingerprintManager;
     private KeyguardManager keyguardManager;
-
+    TextView decryptedText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_receive);
-
-        smsListView = (ListView) findViewById(R.id.SMSList);
-
-        arrayAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, smsMessagesList);
-        smsListView.setAdapter(arrayAdapter);
+        setContentView(R.layout.activity_decrypt);
 
 
-        // Add SMS Read Permision At Runtime
-        // Todo : If Permission Is Not GRANTED
-        if(ContextCompat.checkSelfPermission(getBaseContext(), "android.permission.READ_SMS") == PackageManager.PERMISSION_GRANTED) {
+        decryptedText = findViewById(R.id.decrypttextView);
+        Intent intent = getIntent();
+        String encryptedString = intent.getStringExtra("message");
 
-            // Todo : If Permission Granted Then Show SMS
-            refreshSmsInbox();
+        fingerPrint(encryptedString);
+        int i = encryptedString.indexOf("PK");
+        int j = encryptedString.indexOf("\n");
+        byte[] encryptedMessage = Base64.decode(encryptedString.substring(j + 1, i - 1), 0);
+        String keyStr = encryptedString.substring(i + 4);
 
-            smsListView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-                @Override
-                public void onItemClick(AdapterView<?> adapterView, View view, int pos, long l)
-                {
-                    try {
-                        String[] smsMessages = smsMessagesList.get(pos).split("\n");
-                        String address = smsMessages[0];
-                        String smsMessage = "";
-                        for (int i = 1; i < smsMessages.length; ++i) {
-                            smsMessage += smsMessages[i];
-                        }
-                        String smsMessageStr = address + "\n";
-                        smsMessageStr += smsMessage;
-                        jao(smsMessageStr);
-                        //Toast.makeText(getApplicationContext(), smsMessageStr, Toast.LENGTH_SHORT).show();
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
-            });
-
-        } else {
-            // Todo : Then Set Permission
-            final int REQUEST_CODE_ASK_PERMISSIONS = 123;
-            ActivityCompat.requestPermissions(ReceiverActivity.this, new String[]{"android.permission.READ_SMS"}, REQUEST_CODE_ASK_PERMISSIONS);
+        PublicKey decodePublic = null;
+        try {
+            decodePublic = Asymmetric.StringToPublic(keyStr);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+        } catch (InvalidKeySpecException e) {
+            e.printStackTrace();
         }
+        String plainTextDec = "null";
+        try {
+            plainTextDec = Asymmetric.do_RSADecryption(encryptedMessage, decodePublic);
+        } catch (Exception e) {
+            e.printStackTrace();
 
-
+        }
+        final Handler handler = new Handler();
+        final String finalPlainTextDec = plainTextDec;
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                // Do something after 5s = 5000ms
+                decryptedText.setText(finalPlainTextDec);
+            }
+        }, 2000);
 
     }
 
-    public void refreshSmsInbox() {
-        ContentResolver contentResolver = getContentResolver();
-        Cursor smsInboxCursor = contentResolver.query(Uri.parse("content://sms/inbox"), null, null, null, null);
-        int indexBody = smsInboxCursor.getColumnIndex("body");
-        int indexAddress = smsInboxCursor.getColumnIndex("address");
-        if (indexBody < 0 || !smsInboxCursor.moveToFirst()) return;
-        arrayAdapter.clear();
-        do {
-            String str = "SMS From: " + smsInboxCursor.getString(indexAddress) +
-                    "\n" + smsInboxCursor.getString(indexBody) + "\n";
-            arrayAdapter.add(str);
-        } while (smsInboxCursor.moveToNext());
-    }
-
-    public void updateList(final String smsMessage) {
-        arrayAdapter.insert(smsMessage, 0);
-        arrayAdapter.notifyDataSetChanged();
-    }
-
-
-    private void generateKey() throws FingerprintException {
+    private void generateKey() throws DecryptMessage.FingerprintException {
         try {
             // Obtain a reference to the Keystore using the standard Android keystore container identifier (“AndroidKeystore”)//
             keyStore = KeyStore.getInstance("AndroidKeyStore");
@@ -172,7 +126,7 @@ public class ReceiverActivity extends AppCompatActivity {
                 | CertificateException
                 | IOException exc) {
             exc.printStackTrace();
-            throw new FingerprintException(exc);
+            throw new DecryptMessage.FingerprintException(exc);
         }
     }
 
@@ -213,16 +167,7 @@ public class ReceiverActivity extends AppCompatActivity {
         }
     }
 
-
-    public void jao(String encryptedString)
-    {
-
-        Intent intent = new Intent(this, DecryptMessage.class);
-        intent.putExtra("message", encryptedString);
-        startActivity(intent);
-    }
-    public void fingerPrint(String encryptedString)
-    {
+    public void fingerPrint(String encryptedString) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             //Get an instance of KeyguardManager and FingerprintManager//
             keyguardManager =
@@ -243,7 +188,7 @@ public class ReceiverActivity extends AppCompatActivity {
             //Check that the user has registered at least one fingerprint//
             if (!fingerprintManager.hasEnrolledFingerprints()) {
                 // If the user hasn’t configured any fingerprints, then display the following message//
-                }
+            }
 
             //Check that the lockscreen is secured//
             if (!keyguardManager.isKeyguardSecure()) {
@@ -251,7 +196,7 @@ public class ReceiverActivity extends AppCompatActivity {
             } else {
                 try {
                     generateKey();
-                } catch (FingerprintException e) {
+                } catch (DecryptMessage.FingerprintException e) {
                     e.printStackTrace();
                 }
 
@@ -263,11 +208,9 @@ public class ReceiverActivity extends AppCompatActivity {
                     // for starting the authentication process (via the startAuth method) and processing the authentication process events//
                     FingerprintHandler helper = new FingerprintHandler(this);
                     helper.startAuth(fingerprintManager, cryptoObject);
-                    Intent intent = new Intent(this, DecryptMessage.class);
-                    intent.putExtra("message", encryptedString);
-                    startActivity(intent);
+
                 }
             }
         }
-                }
-            }
+    }
+}
